@@ -1,0 +1,152 @@
+import pyaudio
+import numpy as np
+import librosa
+from scipy.signal import butter, lfilter, iirnotch
+from flask import Flask, jsonify, render_template
+import threading
+import smtplib
+import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+# Configuration
+SAMPLE_RATE = 44100
+DURATION = 2
+THRESHOLD_FREQUENCY = 2000
+THRESHOLD_AMPLITUDE = 200
+SENDER_EMAIL = "noise.monitoring.iot@gmail.com"
+SENDER_PASSWORD = "hriqthrpxipttsoe"
+RECEIVER_EMAIL = "receiver088@gmail.com"
+
+# Globals
+is_recording = False
+peak_freq = 0.0
+peak_amp = 0.0
+status = "No Noise Detected"
+email_sent = False
+last_email_time = 0
+recording_thread = None
+lock = threading.Lock()
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/start')
+def start_recording():
+    global is_recording, recording_thread
+    if not is_recording:
+        is_recording = True
+        recording_thread = threading.Thread(target=record)
+        recording_thread.daemon = True
+        recording_thread.start()
+    return jsonify({"message": "Recording started"})
+
+@app.route('/stop')
+def stop_recording():
+    global is_recording
+    is_recording = False
+    return jsonify({"message": "Recording stopped"})
+
+@app.route('/status')
+def get_status():
+    with lock:
+        return jsonify({
+            "peak_freq": peak_freq,
+            "peak_amp": peak_amp,
+            "status": status
+        })
+
+def send_email():
+    global email_sent, last_email_time
+    subject = "Noise Detected Alert"
+    body = f"Noise detected:\nFrequency: {peak_freq:.2f} Hz\nAmplitude: {peak_amp:.2f}"
+
+    msg = MIMEMultipart()
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = RECEIVER_EMAIL
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.send_message(msg)
+            print("Email sent successfully.")
+            email_sent = True
+            last_email_time = time.time()
+    except Exception as e:
+        print(f"Error sending email: {e}")
+
+def butter_bandpass(lowcut, highcut, fs, order=4):
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    return butter(order, [low, high], btype='band')
+
+def apply_bandpass_filter(data, lowcut=100, highcut=18000, fs=44100):
+    b, a = butter_bandpass(lowcut, highcut, fs)
+    return lfilter(b, a, data)
+
+def apply_notch_filter(data, freq=50, fs=44100, quality_factor=30):
+    b, a = iirnotch(freq, quality_factor, fs)
+    return lfilter(b, a, data)
+
+def process_audio(audio):
+    global peak_freq, peak_amp, status, email_sent, last_email_time
+
+    audio = audio.astype(np.float32)
+    audio = librosa.util.normalize(audio)
+    filtered_audio = apply_bandpass_filter(audio)
+    filtered_audio = apply_notch_filter(filtered_audio)
+
+    windowed_audio = filtered_audio * np.hamming(len(filtered_audio))
+    fft_size = 8192
+    fft = np.fft.rfft(windowed_audio, n=fft_size)
+    frequencies = np.fft.rfftfreq(fft_size, 1 / SAMPLE_RATE)
+    magnitude = np.abs(fft)
+
+    peak_index = np.argmax(magnitude)
+    detected_freq = frequencies[peak_index]
+    detected_amp = magnitude[peak_index]
+
+    with lock:
+        peak_freq = float(detected_freq)
+        peak_amp = float(detected_amp)
+
+        if peak_freq > THRESHOLD_FREQUENCY or peak_amp > THRESHOLD_AMPLITUDE:
+            status = "Noise Detected"
+            if not email_sent or (time.time() - last_email_time > 30):
+                send_email()
+        else:
+            status = "No Noise Detected"
+            email_sent = False  # reset to allow new email when next noise appears
+
+def record_audio():
+    p = pyaudio.PyAudio()
+    stream = p.open(format=pyaudio.paInt16,
+                    channels=1,
+                    rate=SAMPLE_RATE,
+                    input=True,
+                    frames_per_buffer=1024)
+    frames = []
+    for _ in range(0, int(SAMPLE_RATE / 1024 * DURATION)):
+        data = stream.read(1024, exception_on_overflow=False)
+        frames.append(np.frombuffer(data, dtype=np.int16))
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+    audio_data = np.concatenate(frames)
+    process_audio(audio_data)
+
+def record():
+    global is_recording
+    while is_recording:
+        record_audio()
+
+if __name__ == '__main__':
+    app.run(debug=True)
