@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IoT Noise Monitoring</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>IoT Based Noise Monitoring System</h1>
+
+  <div class="controls">
+    <button onclick="startMonitoring()">Start Recording</button>
+    <button onclick="stopMonitoring()">Stop Recording</button>
+  </div>
+
+  <div class="status-card">
+    <p id="status">Status: Waiting...</p>
+    <p id="freq">Peak Frequency: 0 Hz</p>
+    <p id="amp">Peak Amplitude: 0</p>
+  </div>
+
+  <canvas id="freqChart"></canvas>
+  <canvas id="ampChart"></canvas>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
