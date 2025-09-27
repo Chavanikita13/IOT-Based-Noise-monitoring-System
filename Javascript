@@ -1,0 +1,78 @@
+let freqCtx = document.getElementById('freqChart').getContext('2d');
+let ampCtx = document.getElementById('ampChart').getContext('2d');
+
+let labels = [];
+let freqData = [];
+let ampData = [];
+const maxPoints = 20;
+
+let monitoring = true;
+
+let freqChart = new Chart(freqCtx, {
+  type: 'line',
+  data: {
+    labels: labels,
+    datasets: [{
+      label: 'Frequency (Hz)',
+      data: freqData,
+      borderColor: 'blue',
+      fill: false
+    }]
+  }
+});
+
+let ampChart = new Chart(ampCtx, {
+  type: 'line',
+  data: {
+    labels: labels,
+    datasets: [{
+      label: 'Amplitude',
+      data: ampData,
+      borderColor: 'red',
+      fill: false
+    }]
+  }
+});
+
+async function updateStatus() {
+  if (!monitoring) return;
+  try {
+    const res = await fetch('/status');
+    const data = await res.json();
+
+    let statusText = data.status;
+    if (data.email_sent) {
+      statusText += " (Mail Sent)";
+    }
+
+    document.getElementById('status').textContent = "Status: " + statusText;
+    document.getElementById('freq').textContent = "Peak Frequency: " + data.peak_freq.toFixed(2) + " Hz";
+    document.getElementById('amp').textContent = "Peak Amplitude: " + data.peak_amp.toFixed(2);
+
+    const now = new Date().toLocaleTimeString();
+    labels.push(now);
+    freqData.push(data.peak_freq);
+    ampData.push(data.peak_amp);
+
+    if (labels.length > maxPoints) {
+      labels.shift();
+      freqData.shift();
+      ampData.shift();
+    }
+
+    freqChart.update();
+    ampChart.update();
+  } catch (err) {
+    console.error("Error fetching status:", err);
+  }
+}
+
+function startMonitoring() {
+  monitoring = true;
+}
+
+function stopMonitoring() {
+  monitoring = false;
+}
+
+setInterval(updateStatus, 2000);
